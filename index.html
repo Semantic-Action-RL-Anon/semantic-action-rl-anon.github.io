@@ -1,22 +1,570 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <meta charset="utf-8">
+  <meta name="description"
+        content="We run RL over a VLA's language prompts, enabling efficient real-robot adaptation on complex &amp; long-horizon tasks, where existing methods for improving robot behavior in deployment struggle.">
+  <meta name="keywords" content="Semantic Action RL, SARL, VLA, Vision-Language-Action, Reinforcement Learning, Language Steering, Robot Foundation Models">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Anonymous Project Page</title>
-  <link rel="icon" href="static/images/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="static/css/bulma.min.css">
-  <link rel="stylesheet" href="static/css/fontawesome.all.min.css">
-  <link rel="stylesheet" href="static/css/index.css">
-  <script defer src="static/js/fontawesome.all.min.js"></script>
+  <title>Adapting Generalist Robot Policies with Semantic Reinforcement Learning</title>
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Adapting Generalist Robot Policies with Semantic Reinforcement Learning">
+  <meta property="og:description" content="We run RL over a VLA's language prompts, enabling efficient real-robot adaptation on complex &amp; long-horizon tasks, where existing methods for improving robot behavior in deployment struggle.">
+  <meta property="og:image" content="./static/images/figures/teaser.png">
+  <meta property="og:type" content="website">
+
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro"
+        rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <!-- KaTeX for rendering math notation in the Method section -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <link rel="stylesheet" href="./static/css/index.css?v=2">
+  <link rel="icon" href="./static/images/favicon.svg">
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script defer src="./static/js/fontawesome.all.min.js"></script>
 </head>
 <body>
-  <section class="hero is-fullheight">
-    <div class="hero-body">
-      <div class="container has-text-centered">
-        <h1 class="title is-2">Hello, this is an anonymous github website</h1>
+
+<nav class="side-nav" role="navigation" aria-label="section navigation">
+  <ul>
+    <li><a href="#tldr" data-target="tldr"><span class="tick"></span><span class="nav-label">TL;DR</span></a></li>
+    <li><a href="#challenge" data-target="challenge"><span class="tick"></span><span class="nav-label">The Challenge</span></a></li>
+    <li><a href="#method" data-target="method"><span class="tick"></span><span class="nav-label">Method</span></a></li>
+    <li><a href="#tasks" data-target="tasks"><span class="tick"></span><span class="nav-label">Tasks &amp; Rollouts</span></a></li>
+    <li><a href="#results" data-target="results"><span class="tick"></span><span class="nav-label">Results</span></a></li>
+  </ul>
+</nav>
+
+
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered">
+        <div class="column has-text-centered">
+          <h1 class="title is-1 publication-title">Adapting Generalist Robot Policies with<br>Semantic Reinforcement Learning</h1>
+          <div class="is-size-5 publication-authors">
+            <span class="author-block">Anonymous Authors</span>
+          </div>
+
+          <div class="column has-text-centered">
+            <div class="publication-links">
+              <!-- PDF / Paper — will eventually link to a PDF with additional experimental details -->
+              <span class="link-block has-tooltip">
+                <span class="tooltip-text">coming soon</span>
+                <a href="#" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fas fa-file-pdf"></i></span>
+                  <span>Paper</span>
+                </a>
+              </span>
+              <!-- Code -->
+              <span class="link-block has-tooltip">
+                <span class="tooltip-text">coming soon</span>
+                <a href="#" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fab fa-github"></i></span>
+                  <span>Code</span>
+                </a>
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-  </section>
+  </div>
+</section>
+
+
+<!-- ===================== TEASER + TL;DR ===================== -->
+<section class="hero teaser" id="tldr">
+  <div class="container is-max-desktop">
+    <div class="hero-body">
+      <div class="teaser-unit">
+        <div class="teaser-img-wrap">
+          <img class="teaser-img" src="./static/images/figures/teaser.png" alt="SARL teaser: RL over semantic actions (language prompts).">
+        </div>
+        <div class="tldr">
+          <p>
+            <span class="tldr-label">TL;DR</span>
+            We propose <strong>optimizing the prompt inputs</strong> of generalist robot policies with reinforcement learning, 
+            enabling efficient real-robot adaptation on complex & long-horizon tasks, where existing methods for 
+            improving robot behavior in deployment struggle.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== THE CHALLENGE ===================== -->
+<section class="section" id="challenge" style="padding-top: 1rem;">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">The Challenge</h2>
+    <p class="big-question">
+      How can we adapt generalist policies at deployment time to go beyond their pre-training?
+    </p>
+
+    <div class="content has-text-justified">
+      <p>
+        Vision-language-action (VLA) models learn broad skill repertoires from pretraining, giving us powerful priors
+        over plausible robot behaviors. The standard strategy is to just <em>prompt</em> these models with new, desired task goals. 
+        However, as tasks scale in complexity and horizon, a successful policy must implicitly <strong>decompose</strong> goals into atomic,
+        executable behaviors, <em>and</em> <strong>ground</strong> each behavior in a skill the robot can actually pull
+        off in its current context. Often, directly prompting a VLA with a challenging goal fails.
+      </p>
+    </div>
+
+    <!--
+      Each card has a video placeholder. To fill one, replace its
+      <div class="video-placeholder wide">...</div> with:
+        <video autoplay muted loop playsinline>
+          <source src="./static/videos/concepts/NAME.mp4" type="video/mp4">
+        </video>
+      Suggested names: concept_prompting.mp4, concept_vlm.mp4, concept_rl.mp4
+    -->
+    <div class="why-grid">
+      <div class="why-card bad">
+        <span class="why-tag">Why prompting fails</span>
+        <h4>Long-horizon prompts are out of support</h4>
+        <p>
+          Ask a VLA to <span class="prompt">move the hammer to the plate, then grasp the mushroom</span> and its action
+          distribution collapses into the wrong modes &mdash; it moves the <em>mushroom</em> to the plate and grabs the <em>spoon</em> instead. 
+        </p>
+        <div class="why-video">
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/concepts/concept_prompting.mp4" type="video/mp4">
+          </video>
+        </div>
+      </div>
+      <div class="why-card partial">
+        <span class="why-tag">Why a VLM isn't enough</span>
+        <h4>VLMs decompose, but don't ground</h4>
+        <p>
+          A VLM can break the goal into sensible sub-instructions, but has no idea which
+          commands actually work on <em>this</em> robot. Saying <span class="prompt">grasp the hammer</span> makes the VLA grab a spoon; only <span class="prompt">move down and grasp</span> succeeds. Plausible
+          &ne; grounded.
+        </p>
+        <div class="why-video">
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/concepts/concept_vlm.mp4" type="video/mp4">
+          </video>
+        </div>
+      </div>
+      <div class="why-card good">
+        <span class="why-tag">Why we need RL</span>
+        <h4>RL grounds language in behavior</h4>
+        <p>
+          The only way to know which prompts actually make progress is to <em>try them on the robot and learn from the
+          result</em>. SARL runs RL over the prompt space, learning a grounded mapping between semantic actions and
+          physical behaviors, achieving both decomposition and grounding.
+        </p>
+        <div class="why-video">
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/concepts/concept_rl.mp4" type="video/mp4">
+          </video>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===================== METHOD ===================== -->
+<section class="section" id="method" style="padding-top: 1rem;">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Semantic Action RL (SARL)</h2>
+    <p class="big-question">
+      SARL runs RL over a VLA's language prompts,
+      lifting learning from robot actions to the semantic level.
+    </p>
+
+    <div class="content has-text-justified">
+      <p>
+        Rather than viewing a VLA as a policy to be statically prompted, we view it as a <strong>semantically
+        controllable action prior</strong> that can be dynamically guided throughout deployment. This motivates a
+        simple but powerful transformation of the RL problem: instead of learning over the robot action space
+        <span class="prompt">\(\mathcal{A}_{\mathrm{robot}}\)</span> (joint positions, end-effector deltas, etc.), we learn over a
+        <strong>semantic action space</strong> <span class="prompt">\(\mathcal{A}_{\mathrm{sem}}\)</span> &mdash; the space of language commands &mdash;
+        and deploy the VLA as a transformation between the two. We call the resulting induced problem a
+        <em>semantic MDP</em>.
+      </p>
+      <p>
+        Concretely, at each step SARL picks a <em>semantic action</em> (a prompt) <span class="prompt">\(\ell\)</span>,
+        the VLA turns it into robot actions, and the environment transitions and returns a reward. SARL learns a
+        <strong>semantic Q-function</strong> <span class="prompt">\(Q_{\mathrm{sem}}(s, \ell)\)</span> via temporal-difference
+        backups that estimates how effective each prompt is at making task progress, and acts by sampling from the softmax
+        over these Q-values. Finally, naively searching over <em>all</em> possible prompts is intractable, so SARL uses a VLM to propose a
+        small set of candidate semantic actions from the current observation and task.
+      </p>
+    </div>
+
+    <div class="algo-box">
+      <div class="algo-title">Algorithm 1 &nbsp;&middot;&nbsp; Semantic Action RL (SARL)</div>
+      <ol class="algo-steps">
+        <li><span class="algo-kw">Initialize</span> the semantic Q-function <span class="prompt">\(Q_{\mathrm{sem}}(s, \ell)\)</span> and an empty replay buffer <span class="prompt">\(\mathcal{B}\)</span>.</li>
+        <li><span class="algo-kw">For</span> each step <span class="prompt">\(t = 1, 2, 3, \ldots\)</span> :
+          <ol class="algo-substeps">
+            <li>Query the <strong>VLM</strong> for a small set of candidate prompts <span class="prompt">\(\mathcal{A}_{\mathrm{sem}}\)</span> from the current observation and task goal.</li>
+            <li>Sample a prompt <span class="prompt">\(\ell\)</span> from <span class="prompt">\(\mathrm{softmax}(Q_{\mathrm{sem}}(s, \cdot))\)</span> &mdash; prompts with higher Q-values are more likely.</li>
+            <li>The <strong>VLA</strong> executes <span class="prompt">\(\ell\)</span> as robot actions; observe reward <span class="prompt">\(r\)</span> and next state <span class="prompt">\(s'\)</span>.</li>
+            <li>Add the transition <span class="prompt">\((s, \ell, r, s')\)</span> to the buffer <span class="prompt">\(\mathcal{B}\)</span>.</li>
+            <li>Update <span class="prompt">\(Q_{\mathrm{sem}}\)</span> toward <span class="prompt">\(r + V_{\mathrm{sem}}(s')\)</span> with TD backups over <span class="prompt">\(\mathcal{B}\)</span>.</li>
+          </ol>
+        </li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===================== TASKS & ROLLOUTS ===================== -->
+<section class="section" id="tasks" style="padding-top: 1rem;">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Tasks &amp; Rollouts</h2>
+
+    <div class="fig">
+      <img src="./static/images/figures/task-suite.png" alt="Four long-horizon WidowX tasks.">
+      <p class="fig-caption">
+        <span class="fig-num">Task suite.</span>
+        We evaluate on four complex, long-horizon WidowX tasks (above), plus ten tasks on the simulated LIBERO-10
+        benchmark. These tasks are multi-step and require composing skills seen during pretraining (Bridge V2 for real,
+        LIBERO-90 for sim) &mdash; the base policies achieve near-0% success on most of them, making them a clean test
+        of deployment-time adaptation.
+      </p>
+    </div>
+
+    <!--
+      ============================================================
+      VIDEO MATRIX — task x method.
+      To fill a cell, replace its <div class="video-placeholder">...</div> with:
+        <video autoplay muted loop playsinline>
+          <source src="./static/videos/tasks/N_METHOD.mp4" type="video/mp4">
+        </video>
+      Filenames per task N (1-4):
+        N_sarl.mp4, N_iclvlm.mp4, N_dsrl.mp4, N_residual.mp4, N_base.mp4
+      ============================================================
+    -->
+
+    <!-- Task 1 -->
+    <div class="task-block">
+      <div class="task-label">Task 1 &mdash; Move the hammer to the plate. Then, grasp the mushroom.</div>
+      <div class="video-row">
+        <div class="video-cell ours">
+          <div class="method-label">SARL (Ours)</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/1_sarl.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">ICL VLM</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/1_iclvlm.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">DSRL</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/1_dsrl.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">Residual RL</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/1_residual.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">Zero-shot Base</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/1_base.mp4" type="video/mp4">
+          </video>
+        </div>
+      </div>
+    </div>
+
+    <!-- Task 2 -->
+    <div class="task-block">
+      <div class="task-label">Task 2 &mdash; Move the banana to the pot on the right and sushi to the bowl.</div>
+      <div class="video-row">
+        <div class="video-cell ours">
+          <div class="method-label">SARL (Ours)</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/2_sarl.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">ICL VLM</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/2_iclvlm.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">DSRL</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/2_dsrl.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">Residual RL</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/2_residual.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">Zero-shot Base</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/2_base.mp4" type="video/mp4">
+          </video>
+        </div>
+      </div>
+    </div>
+
+    <!-- Task 3 -->
+    <div class="task-block">
+      <div class="task-label">Task 3 &mdash; Move the left stuffed toy to the largest bowl.</div>
+      <div class="video-row">
+        <div class="video-cell ours">
+          <div class="method-label">SARL (Ours)</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/3_sarl.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">ICL VLM</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/3_iclvlm.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">DSRL</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/3_dsrl.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">Residual RL</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/3_residual.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">Zero-shot Base</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/3_base.mp4" type="video/mp4">
+          </video>
+        </div>
+      </div>
+    </div>
+
+    <!-- Task 4 -->
+    <div class="task-block">
+      <div class="task-label">Task 4 &mdash; Move the pot lid to the towel.</div>
+      <div class="video-row">
+        <div class="video-cell ours">
+          <div class="method-label">SARL (Ours)</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/4_sarl.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">ICL VLM</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/4_iclvlm.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">DSRL</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/4_dsrl.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">Residual RL</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/4_residual.mp4" type="video/mp4">
+          </video>
+        </div>
+        <div class="video-cell">
+          <div class="method-label">Zero-shot Base</div>
+          <video autoplay muted loop playsinline>
+            <source src="./static/videos/tasks/4_base.mp4" type="video/mp4">
+          </video>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- ===================== RESULTS ===================== -->
+<section class="section" id="results" style="padding-top: 1rem;">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Results</h2>
+
+    <div class="content has-text-justified">
+      <p>
+        SARL improves the base VLA's success rate from near 0% under the task prompt up to ~80% after only
+        <strong>60&ndash;100 online episodes</strong>, in both the real world and simulation. It beats action-space RL
+        methods (<a href="https://diffusion-steering.github.io/" target="_blank" rel="noopener noreferrer">DSRL</a>,
+        <a href="https://wenlixiao.com/self-improve-VLA-PLD" target="_blank" rel="noopener noreferrer">Residual RL</a>)
+        that are fundamentally limited by the base policy's behavior under a single fixed
+        prompt, and it beats an <a href="https://steerable-policies.github.io/" target="_blank" rel="noopener noreferrer">in-context-learning VLM</a> baseline that proposes plausible commands but struggles to ground
+        them in physical behavior.
+      </p>
+    </div>
+
+    <div class="fig">
+      <img src="./static/images/figures/real-graphs.png" alt="Real-world WidowX results across four tasks.">
+      <p class="fig-caption">
+        <span class="fig-num">Real-world WidowX.</span>
+        Across all four long-horizon tasks, SARL achieves the best improvement of generalist-policy behavior in
+        deployment. Each data point represents 10 evaluations.
+      </p>
+    </div>
+
+    <div class="fig">
+      <img src="./static/images/figures/sim-graphs.png" alt="Simulated LIBERO-10 results across ten tasks.">
+      <p class="fig-caption">
+        <span class="fig-num">Simulated LIBERO-10.</span>
+        On long-horizon LIBERO-10 tasks, SARL outperforms DSRL, Residual RL, and the ICL VLM. It successfully adapts the
+        policy on five tasks and matches performance on another that is already near-solved. Each point represents 64
+        evaluations with standard error over 3 seeds.
+      </p>
+    </div>
+
+    <details class="why-works">
+      <summary>
+        <span class="subsection-kicker">SARL vs. Action-Space RL:</span>
+        <span class="subsection-title">Editing prompts unlocks new behavior</span>
+        <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+      </summary>
+      <div class="fig">
+        <img src="./static/images/figures/sarl-vs-base.png" alt="SARL vs. zero-shot base policy.">
+        <p class="fig-caption">
+          <span class="fig-num">SARL vs. action-space RL.</span>
+          On complex, long-horizon tasks the base policy fails when zero-shot prompted &mdash; its action distribution
+          collapses into entirely incorrect modes. Action-space methods can only filter or nudge around that distribution,
+          so they only learn when the base policy is <em>already</em> close to succeeding. By editing the prompt, SARL
+          reaches regions of the VLA's behavioral prior that are inaccessible to action-only steering, sequencing skills
+          covered under pretraining to solve the task.
+        </p>
+      </div>
+    </details>
+
+    <details class="why-works">
+      <summary>
+        <span class="subsection-kicker">SARL vs. VLM:</span>
+        <span class="subsection-title">Grounding is as important as decomposition</span>
+        <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+      </summary>
+      <div class="fig">
+        <img src="./static/images/figures/sarl-vs-vlm.png" alt="SARL vs. in-context-learning VLM.">
+        <p class="fig-caption">
+          <span class="fig-num">SARL vs. VLM prompting.</span>
+          An in-context-learning VLM picks commands that are semantically meaningful but lack grounding, leading to
+          failures: it references an out-of-distribution &ldquo;hammer&rdquo; by name (making the VLA grab a spoon), or
+          picks the wrong verb (<span class="prompt">drop</span>), prematurely releasing the sushi. Through many episodes
+          of experience, SARL learns the grounded behavior each command induces and selects the prompt that actually
+          works.
+        </p>
+      </div>
+    </details>
+  </div>
+</section>
+
+
+<footer class="footer">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-8">
+        <div class="content has-text-centered">
+          <p>
+            Website template borrowed from
+            <a href="https://github.com/nerfies/nerfies.github.io">Nerfies</a>, used under a
+            <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons
+            Attribution-ShareAlike 4.0 International License</a>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    // Render math notation in the Method section (KaTeX, \( ... \) delimiters).
+    var methodSection = document.getElementById('method');
+    if (methodSection && window.renderMathInElement) {
+      window.renderMathInElement(methodSection, {
+        delimiters: [{ left: '\\(', right: '\\)', display: false }],
+        throwOnError: false
+      });
+    }
+
+    // Scroll-spy: highlight the side-nav item for the section in view.
+    var navLinks = document.querySelectorAll('.side-nav a');
+    var linkByTarget = {};
+    var spiedSections = [];
+    navLinks.forEach(function (a) {
+      var id = a.getAttribute('data-target');
+      var sec = document.getElementById(id);
+      if (sec) { linkByTarget[id] = a; spiedSections.push(sec); }
+    });
+    if ('IntersectionObserver' in window && spiedSections.length) {
+      var setActive = function (id) {
+        navLinks.forEach(function (l) { l.classList.remove('active'); });
+        if (linkByTarget[id]) { linkByTarget[id].classList.add('active'); }
+      };
+      var spy = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) { setActive(entry.target.id); }
+        });
+      }, { rootMargin: '-40% 0px -55% 0px', threshold: 0 });
+      spiedSections.forEach(function (s) { spy.observe(s); });
+    }
+
+    // Show native video controls only while hovering the video.
+    document.querySelectorAll('video').forEach(function (v) {
+      v.addEventListener('mouseenter', function () { v.controls = true; });
+      v.addEventListener('mouseleave', function () { v.controls = false; });
+    });
+
+    // Performance: only play videos while they're on screen. Off-screen
+    // videos pause so the browser isn't decoding everything at once.
+    var videos = document.querySelectorAll('video');
+    if ('IntersectionObserver' in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          var v = entry.target;
+          if (entry.isIntersecting) {
+            // Don't fight a user who manually paused via the controls.
+            if (!v.dataset.userPaused) { v.play().catch(function () {}); }
+          } else {
+            v.pause();
+          }
+        });
+      }, { threshold: 0.25 });
+      videos.forEach(function (v) {
+        v.pause();                       // start paused; observer plays when visible
+        v.addEventListener('pause', function () {
+          // Mark a manual pause only when the video is on screen.
+          if (v.controls) { v.dataset.userPaused = '1'; }
+        });
+        v.addEventListener('play', function () { delete v.dataset.userPaused; });
+        io.observe(v);
+      });
+    }
+  });
+</script>
+
 </body>
 </html>
