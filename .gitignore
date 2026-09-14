@@ -1,5 +1,6 @@
 # Claude Code guidance — local only, not part of the published site
 CLAUDE.md
+.claude/
 
 # macOS
 .DS_Store
