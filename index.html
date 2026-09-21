@@ -26,8 +26,16 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
-  <link rel="stylesheet" href="./static/css/index.css?v=3">
+  <link rel="stylesheet" href="./static/css/index.css?v=6">
   <link rel="icon" href="./static/images/favicon.svg">
+
+  <!-- The Experimental Details section (and its hero button + nav entry) ships hidden;
+       visiting with ?experimental-details=show reveals it. -->
+  <script>
+    if (new URLSearchParams(window.location.search).get('experimental-details') === 'show') {
+      document.documentElement.setAttribute('data-exp-details', '');
+    }
+  </script>
 
   <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
   <script defer src="./static/js/fontawesome.all.min.js"></script>
@@ -41,6 +49,7 @@
     <li><a href="#method" data-target="method"><span class="tick"></span><span class="nav-label">Method</span></a></li>
     <li><a href="#tasks" data-target="tasks"><span class="tick"></span><span class="nav-label">Tasks &amp; Rollouts</span></a></li>
     <li><a href="#results" data-target="results"><span class="tick"></span><span class="nav-label">Results</span></a></li>
+    <li class="exp-details-gate"><a href="#experimental-details" data-target="experimental-details"><span class="tick"></span><span class="nav-label">Exp. Details</span></a></li>
   </ul>
 </nav>
 
@@ -57,12 +66,10 @@
 
           <div class="column has-text-centered">
             <div class="publication-links">
-              <!-- Will eventually link to a PDF with additional experimental details -->
-              <span class="link-block has-tooltip">
-                <span class="tooltip-text">coming soon</span>
-                <a href="#" class="external-link button is-normal is-rounded is-dark">
-                  <span class="icon"><i class="fas fa-file-pdf"></i></span>
-                  <span>Experimental Details (pdf)</span>
+              <span class="link-block exp-details-gate">
+                <a href="#experimental-details" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fas fa-flask"></i></span>
+                  <span>Experimental Details (click to jump &darr;)</span>
                 </a>
               </span>
             </div>
@@ -591,6 +598,982 @@
 </section>
 
 
+<!-- ===================== EXPERIMENTAL DETAILS ===================== -->
+<section class="section" id="experimental-details" style="padding-top: 1rem;">
+  <div class="container is-max-desktop">
+    <h2 class="title is-3 has-text-centered">Experimental Details</h2>
+
+    <div class="content has-text-justified">
+      <p>
+        Below, we provide a full description of the procedure we use to implement SARL and baselines, including
+        details on the prompt cache, how we formulate the MDP for a fair comparison between methods, as well as
+        hyperparameters and prompts.
+      </p>
+    </div>
+
+    <!-- A. SARL: In-practice Optimizations -->
+    <details class="why-works">
+      <summary>
+        <span class="subsection-kicker">SARL: In-practice Optimizations</span>
+        <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        <span class="summary-desc">The prompt cache and state-dependent action candidates that make SARL practical to run, summarized as Algorithm 2.</span>
+      </summary>
+      <div class="content has-text-justified insight-note">
+        <p>
+          Na&iuml;vely learning over the space of all possible VLA prompts (<span class="prompt">\(\mathcal{A}_{\mathrm{sem}}\)</span>),
+          as presented in Algorithm 1 of the paper, is challenging. In section IV-C of the paper, we address this and describe
+          practical design choices that make use of VLM priors to (1) focus exploration and (2) simplify the
+          parameterization of the learned Q-function. Here, we re-explain these optimizations more
+          formally, culminating in Algorithm 2 &mdash; the full implementation of SARL that we run for all
+          experiments.
+        </p>
+        <h4>Prompt Cache</h4>
+        <p>
+          The first question we ask is: how should <span class="prompt">\(Q_{\mathrm{sem}}(s, \ell)\)</span> be parameterized, where,
+          importantly, <span class="prompt">\(\ell\)</span> is a language prompt? While many implementations of
+          <span class="prompt">\(Q_{\mathrm{sem}}(s, \ell)\)</span> exist, they each have trade-offs. For example, allowing SARL to
+          optimize over <em>any arbitrary</em> language prompt would require a prompt featurization scheme that can
+          (1) encode the semantic meaning of each prompt and (2) generalize the VLA's grounded behavior resulting
+          from each prompt across these features. In practice, we find prompt features from off-the-shelf LLM/VLMs
+          we tested to be poor predictors of action quality, making the latter especially difficult. Note that this
+          is unsurprising; it is the same reason the ICL VLM baseline struggles (Section V-D of the paper).
+        </p>
+        <p>
+          As a result, we instead opt to have a VLM build a fixed cache, <span class="prompt">\(\mathcal{C}\)</span>, of task-relevant
+          prompts, once at the beginning of each training run. Then, SARL is only allowed to optimize over skills
+          induced by prompts from <span class="prompt">\(\mathcal{C}\)</span>, allowing <span class="prompt">\(Q_{\mathrm{sem}}(s, \ell)\)</span> to be
+          parameterized by a simple discrete action space. This choice has the added benefit of easy integration
+          with online RL libraries. To fill the cache, we either store the first <span class="prompt">\(|\mathcal{C}|\)</span> action
+          candidates generated by the VLM, or, for better state coverage, use the state distribution from a small
+          number of task demos. We use the former strategy in simulation and the latter in the real world. We also
+          scale the cache size <span class="prompt">\(|\mathcal{C}| \in \{32, 64, 100\}\)</span> with the task horizon, and the exact
+          value used for each task can be found in the SARL hyperparameters table below as
+          <code>outer_policy.cache_size</code>.
+        </p>
+        <p>
+          A natural concern may be that these design decisions may (1) limit SARL's expressivity or (2) make it
+          brittle to initialization. Empirically, we find that because VLMs are able to sample good task solving
+          strategies some (but not all) of the time (Figure 3 of the paper), the prompt cache by construction
+          contains a large diversity of task-solving strategies, which can be effectively optimized by SARL. This
+          intuition is grounded in our experiments in Section V-F of the paper, which find that building
+          <span class="prompt">\(\mathcal{C}\)</span> does not fundamentally offer SARL a &ldquo;free lunch&rdquo; or restrict its
+          performance. These experiments also find SARL's performance to be robust to the cache's construction. In
+          summary, we find these simple strategies outlined in this section effective to demonstrate the value of
+          language-driven RL.
+        </p>
+        <h4>State-dependent Action Candidates, <span class="prompt">\(\mathcal{A}^t_{\mathrm{sem}}\)</span></h4>
+        <p>
+          It is possible to run Algorithm 1 where at each step, SARL considers all the prompts in the prompt cache
+          as candidate actions, <span class="prompt">\(\mathcal{A}_{\mathrm{sem}} = \mathcal{C}\)</span>. However, only a subset of these
+          prompts may be relevant at any given state <span class="prompt">\(s_t\)</span>. Therefore, we use a VLM to produce a set of
+          candidate semantic actions <span class="prompt">\(\mathcal{A}^t_{\mathrm{sem}} \subset \mathcal{C}\)</span>, allowing SARL to only
+          consider a small number of state-relevant actions at each step <span class="prompt">\(s_t\)</span>.
+          <span class="prompt">\(|\mathcal{A}^t_{\mathrm{sem}}|\)</span> for each task can be found in the SARL hyperparameters table below
+          as <code>outer_policy.max_candidates</code>.
+        </p>
+        <p>
+          We consider two additional optimizations: First, for each next state <span class="prompt">\(s_{t+1}\)</span> added to the
+          replay buffer in Algorithm 1, we also store the corresponding generated
+          <span class="prompt">\(\mathcal{A}^{t+1}_{\mathrm{sem}}\)</span>, which avoids the need to call the VLM during
+          Temporal-Difference (TD) backups. Second, instead of generating
+          <span class="prompt">\(\mathcal{A}^t_{\mathrm{sem}}\)</span> for each <span class="prompt">\(t\)</span>, we use the same
+          <span class="prompt">\(\mathcal{A}^t_{\mathrm{sem}}\)</span> for <span class="prompt">\(t_{\mathrm{vlm}}\)</span> steps before
+          regenerating &mdash; this speeds up the time to collect each episode, while still allowing SARL to make
+          high-frequency decisions. A revised Algorithm 1 with these optimizations is provided in Algorithm 2.
+        </p>
+      </div>
+      <div class="algo-box">
+        <div class="algo-title">Algorithm 2 &nbsp;&middot;&nbsp; Semantic Action RL (SARL) with Optimizations</div>
+        <ol class="algo-steps">
+          <li><span class="algo-kw">Input:</span> semantic environment <span class="prompt">\(\mathcal{M}_{\mathrm{sem}}\)</span>, semantic action set <span class="prompt">\(\mathcal{A}_{\mathrm{sem}}\)</span>, cache size limit <span class="prompt">\(k\)</span>, regeneration period <span class="prompt">\(t_{\mathrm{vlm}}\)</span>, demonstrations <span class="prompt">\(\mathfrak{D}\)</span> (optional).</li>
+          <li><span class="algo-kw">Initialize</span> <span class="prompt">\(Q^1_{\mathrm{sem}}\)</span> randomly, replay buffer <span class="prompt">\(\mathfrak{B} \leftarrow \emptyset\)</span>, prompt cache <span class="prompt">\(\mathcal{C} \leftarrow \emptyset\)</span>. If demonstrations <span class="prompt">\(\mathfrak{D}\)</span> are provided, update <span class="prompt">\(\mathfrak{B}\)</span> and <span class="prompt">\(\mathcal{C}\)</span> accordingly.</li>
+          <li><span class="algo-kw">Function</span> <span class="algo-fn">GetCandidates</span><span class="prompt">\((s, t, \mathcal{C}, \mathcal{A}^{\mathrm{prev}}_{\mathrm{sem}})\)</span>:
+            <ol class="algo-substeps">
+              <li><span class="algo-kw">If</span> <span class="prompt">\(\mathrm{mod}(t-1, t_{\mathrm{vlm}}) = 0\)</span>: <span class="algo-comment">// refresh candidate actions</span>
+                <ol class="algo-substeps">
+                  <li><span class="algo-kw">If</span> <span class="prompt">\(|\mathcal{C}| &lt; k\)</span>: query the VLM open-endedly for candidate prompts <span class="prompt">\(\mathcal{A}^{\mathrm{new}}_{\mathrm{sem}}\)</span> given <span class="prompt">\(s\)</span>, and grow the cache: <span class="prompt">\(\mathcal{C} \leftarrow \mathcal{C} \cup \mathcal{A}^{\mathrm{new}}_{\mathrm{sem}}\)</span>. <span class="algo-comment">// cache not yet full: generate open-endedly and cache</span></li>
+                  <li><span class="algo-kw">Else</span>: query the VLM to select candidate prompts <span class="prompt">\(\mathcal{A}^{\mathrm{new}}_{\mathrm{sem}} \subseteq \mathcal{C}\)</span> given <span class="prompt">\(s\)</span>. <span class="algo-comment">// cache is full: restrict VLM choices to the cache</span></li>
+                  <li><span class="algo-kw">Return</span> <span class="prompt">\(\mathcal{A}^{\mathrm{new}}_{\mathrm{sem}}\)</span></li>
+                </ol>
+              </li>
+              <li><span class="algo-kw">Else</span>: <span class="algo-kw">return</span> <span class="prompt">\(\mathcal{A}^{\mathrm{prev}}_{\mathrm{sem}}\)</span>. <span class="algo-comment">// reuse previous step's candidates</span></li>
+            </ol>
+          </li>
+          <li><span class="prompt">\(\mathcal{A}^{1}_{\mathrm{sem}} \leftarrow\)</span> <span class="algo-fn">GetCandidates</span><span class="prompt">\((s_1, 1, \mathcal{C}, \emptyset)\)</span></li>
+          <li><span class="algo-kw">For</span> <span class="prompt">\(t = 1, 2, 3, \ldots\)</span> :
+            <ol class="algo-substeps">
+              <li>Set <span class="prompt">\(\pi^t_{\mathrm{sem}}(\ell \mid s_t ; \mathcal{A}^t_{\mathrm{sem}}) \propto \exp(Q^t_{\mathrm{sem}}(s_t, \ell))\)</span> for <span class="prompt">\(\ell \in \mathcal{A}^t_{\mathrm{sem}}\)</span></li>
+              <li>Sample <span class="prompt">\(\ell_t \sim \pi^t_{\mathrm{sem}}(\cdot \mid s_t ; \mathcal{A}^t_{\mathrm{sem}})\)</span> <span class="algo-comment">// equivalently, execute action \(a_t \sim \pi_{\mathrm{vla}}(\cdot \mid s_t, \ell_t)\) in \(\mathcal{M}\)</span></li>
+              <li>Execute semantic action <span class="prompt">\(\ell_t\)</span> in <span class="prompt">\(\mathcal{M}_{\mathrm{sem}}\)</span>, observe reward <span class="prompt">\(r_t\)</span> and next state <span class="prompt">\(s_{t+1}\)</span></li>
+              <li><span class="prompt">\(\mathcal{A}^{t+1}_{\mathrm{sem}} \leftarrow\)</span> <span class="algo-fn">GetCandidates</span><span class="prompt">\((s_{t+1}, t+1, \mathcal{C}, \mathcal{A}^t_{\mathrm{sem}})\)</span> <span class="algo-comment">// cache \(\mathcal{A}^{t+1}_{\mathrm{sem}}\) to eliminate VLM calls during TD backups</span></li>
+              <li><span class="prompt">\(\mathfrak{B} \leftarrow \mathfrak{B} \cup \{ (s_t, \ell_t, r_t, s_{t+1}, \mathcal{A}^{t+1}_{\mathrm{sem}}) \}\)</span></li>
+              <li>Set <span class="prompt">\(\bar{V}^t_{\mathrm{sem}}(s') \leftarrow \mathbb{E}_{\ell' \sim \pi^t_{\mathrm{sem}}(\cdot \mid s' ; \mathcal{A}')} \big[ \bar{Q}^t_{\mathrm{sem}}(s', \ell') \big]\)</span> where <span class="prompt">\(\pi^t_{\mathrm{sem}}(\ell' \mid s'; \mathcal{A}') \propto \exp(Q^t_{\mathrm{sem}}(s', \ell'))\)</span> for <span class="prompt">\(\ell' \in \mathcal{A}'\)</span>, and update <span class="prompt">\(Q^{t+1}_{\mathrm{sem}} \leftarrow \min_Q \sum_{(s,\ell,r,s',\mathcal{A}') \in \mathfrak{B}} (Q(s,\ell) - r - \bar{V}^t_{\mathrm{sem}}(s'))^2\)</span></li>
+            </ol>
+          </li>
+        </ol>
+      </div>
+    </details>
+
+    <!-- B. MDP Definition -->
+    <details class="why-works">
+      <summary>
+        <span class="subsection-kicker">MDP Definition</span>
+        <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        <span class="summary-desc">How low-level environments are converted into high-level MDPs, with the task horizons and step sizes used by each method.</span>
+      </summary>
+      <div class="content has-text-justified insight-note">
+        <p>
+          For steering methods that make decisions over chunks of low-level actions, it is helpful to distinguish
+          two distinct Markov Decision Processes (MDPs): low-level MDPs and high-level MDPs. In low-level MDPs, each
+          transition corresponds to executing a single action in the underlying environment. By contrast, high-level
+          MDPs operate over a coarser temporal resolution, where each transition corresponds to a
+          &ldquo;chunk&rdquo; of low-level actions executed entirely open-loop. When converting low-level MDPs into
+          high-level MDPs, we define a <em>high-level step size</em> to be the number of low-level actions executed
+          open-loop in each transition of the high-level MDP. The horizon of a task in a high-level MDP is therefore
+          its horizon in the corresponding low-level MDP divided by the high-level step-size.
+        </p>
+        <p>
+          The methods evaluated in this work operate over high-level MDPs, which improves rollout speed (especially
+          when querying a VLM is required at each MDP step) and temporal consistency of actions. As shown in the
+          table below, each task's horizon &mdash; defined in terms of low-level environment steps &mdash; remains
+          constant across all compared methods. However, the high-level step size varies across tasks and methods.
+        </p>
+        <p>
+          For real-world WidowX experiments, we use a high-level step size of 20 for the VLM baseline, querying the
+          VLM every 20 environment steps for a new prompt to issue the VLA. This keeps in line with
+          <a href="https://steerable-policies.github.io/" target="_blank" rel="noopener noreferrer">this paper</a>, which this
+          baseline is based on. For our method, SARL, we query the VLM at the same rate, every 20 steps
+          (<span class="prompt">\(t_{\mathrm{vlm}} = 20\)</span>), to generate candidate semantic actions
+          <span class="prompt">\(\mathcal{A}^t_{\mathrm{sem}}\)</span>. However, we use a high-level step size of 1, allowing the RL
+          policy fine-grained control to choose which of these candidates is most relevant at each state. For a fair
+          comparison, we also set the high-level step size of DSRL and Residual RL baselines to be 1,
+          so that they are also able to make reactive, fine-grained adjustments based on the state.
+        </p>
+        <p>
+          In simulation, we find that using a much higher step size is necessary. This is because simulators
+          studying long-horizon manipulation unfortunately have limited diversity, and as a result, the policies
+          trained in these environments also exhibit poor language steerability. We sweep the VLM's high-level step
+          size over 40, 80 and 120 and find 40 to be best. We additionally sweep SARL's high-level step size over 40
+          and 120 (keeping <span class="prompt">\(t_{\mathrm{vlm}} = 1\)</span>) and find better mode-consistent exploration with
+          120. The <a href="https://diffusion-steering.github.io/" target="_blank" rel="noopener noreferrer">original DSRL implementation</a>
+          uses <a href="https://www.pi.website/blog/pi0" target="_blank" rel="noopener noreferrer"><span class="prompt">\(\pi_0\)</span></a> with a high-level step size of
+          20. Our work uses <a href="https://www.pi.website/blog/pi05" target="_blank" rel="noopener noreferrer"><span class="prompt">\(\pi_{0.5}\)</span></a> &mdash; for improved language-following capabilities
+          &mdash; with a high-level step size of 10, as this is the action horizon of
+          <span class="prompt">\(\pi_{0.5}\)</span>. For fairness, we use the same step size for Residual RL. We find our
+          hyperparameter selection for both DSRL and Residual RL to be competitive with the
+          <a href="https://libero-project.github.io/main.html" target="_blank" rel="noopener noreferrer">LIBERO</a> results from
+          <a href="https://diffusion-steering.github.io/" target="_blank" rel="noopener noreferrer">the original DSRL paper</a>.
+          Further details on hyperparameters for DSRL, Residual RL, and SARL can be found in the
+          Hyperparameters subsection below.
+        </p>
+      </div>
+      <div class="results-table wide">
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th rowspan="2">Task</th>
+                <th colspan="4">Task Horizon</th>
+                <th colspan="4">High-Level Step Size</th>
+              </tr>
+              <tr>
+                <th>SARL</th><th>DSRL</th><th>Residual</th><th>VLM</th>
+                <th>SARL</th><th>DSRL</th><th>Residual</th><th>VLM</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Real Task 1:</strong> Move the hammer to the plate then grasp the mushroom.</td><td>120</td><td>120</td><td>120</td><td>120</td><td>1</td><td>1</td><td>1</td><td>20</td></tr>
+              <tr><td><strong>Real Task 2:</strong> Move the yellow sushi to the pot and pick up the spoon.</td><td>120</td><td>120</td><td>120</td><td>120</td><td>1</td><td>1</td><td>1</td><td>20</td></tr>
+              <tr><td><strong>Real Task 3:</strong> Move the banana to the pot on the right and sushi to the bowl.</td><td>160</td><td>160</td><td>160</td><td>160</td><td>1</td><td>1</td><td>1</td><td>20</td></tr>
+              <tr><td><strong>Real Task 4:</strong> Move the pot lid to the towel.</td><td>60</td><td>60</td><td>60</td><td>60</td><td>1</td><td>1</td><td>1</td><td>20</td></tr>
+              <tr><td><strong>LIBERO-LONG</strong></td><td>600</td><td>600</td><td>600</td><td>600</td><td>120</td><td>10</td><td>10</td><td>40</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="table-caption">
+          <span class="fig-num">MDP Definition Across Tasks and Methods.</span>
+          Task horizon is the total number of low-level environment steps allocated per task. The high-level step
+          size defines the conversion between high-level steering steps to low-level environment steps. To get the
+          horizon <span class="prompt">\(H\)</span> of the high-level MDP for each method and task (over which learning happens),
+          divide the task horizon by the high-level step size.
+        </p>
+      </div>
+    </details>
+
+    <!-- Hyperparameter tables (floats in the paper, referenced from the two subsections above) -->
+    <details class="why-works">
+      <summary>
+        <span class="subsection-kicker">Hyperparameters</span>
+        <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        <span class="summary-desc">Full hyperparameter tables for DSRL, Residual RL, and SARL.</span>
+      </summary>
+      <div class="content has-text-justified insight-note">
+        <p>
+          Full hyperparameters for DSRL, Residual RL, and SARL, referenced throughout this section.
+          <em>Real</em> indicates experiments run on the WidowX while <em>Sim</em> indicates experiments run on
+          <a href="https://libero-project.github.io/main.html" target="_blank" rel="noopener noreferrer">LIBERO-LONG</a>.
+        </p>
+      </div>
+      <div class="results-table wide hparams">
+        <p class="table-caption above">
+          <span class="fig-num">DSRL Hyperparameters.</span>
+          Implementations make minimal modifications to
+          <a href="https://diffusion-steering.github.io/" target="_blank" rel="noopener noreferrer">the original DSRL paper</a>.
+        </p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Hyperparameter</th><th>Value</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>outer_policy.action_dim</code></td><td>32</td><td>Action space dimension, which is the same as the latent-noise dim for <a href="https://www.pi.website/blog/pi05" target="_blank" rel="noopener noreferrer"><span class="prompt">\(\pi\)</span> series policies</a>. This low-dim action is repeated across the predicted action horizon as done in <a href="https://diffusion-steering.github.io/" target="_blank" rel="noopener noreferrer">the original DSRL paper</a></td></tr>
+              <tr><td><code>outer_policy.state_dim</code></td><td>8</td><td>Policy has access to a proprioceptive observation</td></tr>
+              <tr><td><code>outer_policy.policy_chunk_size</code></td><td><em>Real:</em> 1 <span class="vs">|</span> <em>Sim:</em> 10</td><td>Number of actions used from each evaluation of <a href="https://www.pi.website/blog/pi05" target="_blank" rel="noopener noreferrer"><span class="prompt">\(\pi\)</span> series policies</a> which generate chunks of actions</td></tr>
+              <tr><td><code>outer_policy.image_resolution</code></td><td>[64, 64]</td><td>Image resolution</td></tr>
+              <tr><td><code>outer_policy.camera_names</code></td><td>[&ldquo;global&rdquo;]</td><td>We only use scene cameras for all experiments</td></tr>
+              <tr><td><code>env.image_resolution</code></td><td>[256, 256]</td><td>Image resolution of the base environment's camera</td></tr>
+              <tr><td><code>sac.batch_size</code></td><td>256</td><td>Optimization batch size for the replay buffer</td></tr>
+              <tr><td><code>sac.actor_lr</code></td><td>0.0001</td><td>Learning rate for the <a href="https://arxiv.org/abs/1801.01290" target="_blank" rel="noopener noreferrer">SAC</a> actor network</td></tr>
+              <tr><td><code>sac.critic_lr</code></td><td>0.0003</td><td>Learning rate for the SAC critic network</td></tr>
+              <tr><td><code>sac.temp_lr</code></td><td>0.0003</td><td>Learning rate for the SAC entropy coefficient (<span class="prompt">\(\alpha\)</span>)</td></tr>
+              <tr><td><code>sac.hidden_dims</code></td><td>[128, 128, 128]</td><td>Hidden dimensions for SAC MLP layers</td></tr>
+              <tr><td><code>sac.cnn_features</code></td><td>[32, 32, 32, 32]</td><td>Feature maps per layer for the CNN encoder</td></tr>
+              <tr><td><code>sac.cnn_strides</code></td><td>[2, 2, 2, 2]</td><td>Strides per layer for the CNN encoder</td></tr>
+              <tr><td><code>sac.cnn_padding</code></td><td><code>VALID</code></td><td>Padding type for the CNN encoder layers</td></tr>
+              <tr><td><code>sac.cnn_latent_dim</code></td><td>50</td><td>CNN output feature dim</td></tr>
+              <tr><td><code>sac.tau</code></td><td>0.005</td><td>Target network soft-update rate</td></tr>
+              <tr><td><code>sac.critic_reduction</code></td><td><code>min</code></td><td>Ensemble reduction strategy for target Q-values</td></tr>
+              <tr><td><code>sac.num_qs</code></td><td>10</td><td>Number of Q-networks in the critic ensemble</td></tr>
+              <tr><td><code>sac.dropout_rate</code></td><td>0.0</td><td>Dropout rate applied inside SAC networks</td></tr>
+              <tr><td><code>sac.init_temperature</code></td><td>1.0</td><td>Initial value for the SAC entropy coefficient</td></tr>
+              <tr><td><code>sac.target_entropy</code></td><td>&minus;16.0</td><td>Target entropy</td></tr>
+              <tr><td><code>sac.action_range</code></td><td>[&minus;1.0, 1.0]</td><td>Defines the allowed min/max action. Note: SAC always sees actions in [&minus;1.0, 1.0], but actions are scaled to be within <code>sac.action_range</code> before executing in the environment.</td></tr>
+              <tr><td><code>sac.discount</code></td><td><span class="prompt">\(1 - \tfrac{1}{H}\)</span></td><td>Discount is defined based on the task horizon <span class="prompt">\(H\)</span> &mdash; see the MDP Definition table.</td></tr>
+              <tr><td><code>train.learning_starts</code></td><td><em>Real:</em> 10 <span class="vs">|</span> <em>Sim:</em> 25</td><td>Episodes collected via uniformly sampling <code>sac.action_range</code> to seed the replay buffer pre-learning</td></tr>
+              <tr><td><code>train.multi_grad_step</code></td><td><em>Real:</em> 10 <span class="vs">|</span> <em>Sim:</em> 20</td><td>Gradient steps per transition added to the buffer</td></tr>
+              <tr><td><code>train.offline_multi_grad_step</code></td><td><em>Real:</em> 0 <span class="vs">|</span> <em>Sim:</em> 5</td><td>Gradient steps per transition added to the buffer for episodes collected before <code>train.learning_starts</code></td></tr>
+              <tr><td><code>eval.eval_every</code></td><td><em>Real:</em> 30 <span class="vs">|</span> <em>Sim:</em> 50</td><td>Number of training episodes between evaluations</td></tr>
+              <tr><td><code>eval.num_evaluations</code></td><td><em>Real:</em> 10 <span class="vs">|</span> <em>Sim:</em> 64</td><td>Number of evaluation episodes</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="results-table wide hparams">
+        <p class="table-caption above">
+          <span class="fig-num">Residual RL Hyperparameters.</span>
+          Implementations make minimal modifications to
+          <a href="https://diffusion-steering.github.io/" target="_blank" rel="noopener noreferrer">the original DSRL paper</a>
+          and following standard Residual RL implementations.
+        </p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Hyperparameter</th><th>Value</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>outer_policy.action_dim</code></td><td><em>Real:</em> 7 <span class="vs">|</span> <em>Sim:</em> 70</td><td>Action space dimension, which is 7 times <code>outer_policy.policy_chunk_size</code>, since Residual RL predicts a correction for each action to be executed</td></tr>
+              <tr><td><code>outer_policy.state_dim</code></td><td><em>Real:</em> 15 <span class="vs">|</span> <em>Sim:</em> 78</td><td>Policy has access to an 8-dim proprioceptive observation along with knowledge of the base policy's action</td></tr>
+              <tr><td><code>outer_policy.policy_chunk_size</code></td><td><em>Real:</em> 1 <span class="vs">|</span> <em>Sim:</em> 10</td><td>Number of actions used from each evaluation of <a href="https://www.pi.website/blog/pi05" target="_blank" rel="noopener noreferrer"><span class="prompt">\(\pi\)</span> series policies</a> which generate chunks of actions</td></tr>
+              <tr><td><code>outer_policy.image_resolution</code></td><td>[64, 64]</td><td>Image resolution</td></tr>
+              <tr><td><code>outer_policy.camera_names</code></td><td>[&ldquo;global&rdquo;]</td><td>We only use scene cameras for all experiments</td></tr>
+              <tr><td><code>env.image_resolution</code></td><td>[256, 256]</td><td>Image resolution of the base environment's camera</td></tr>
+              <tr><td><code>sac.batch_size</code></td><td>256</td><td>Optimization batch size for the replay buffer</td></tr>
+              <tr><td><code>sac.actor_lr</code></td><td>0.0001</td><td>Learning rate for the <a href="https://arxiv.org/abs/1801.01290" target="_blank" rel="noopener noreferrer">SAC</a> actor network</td></tr>
+              <tr><td><code>sac.critic_lr</code></td><td>0.0003</td><td>Learning rate for the SAC critic network</td></tr>
+              <tr><td><code>sac.temp_lr</code></td><td>0.0003</td><td>Learning rate for the SAC entropy coefficient (<span class="prompt">\(\alpha\)</span>)</td></tr>
+              <tr><td><code>sac.hidden_dims</code></td><td>[128, 128, 128]</td><td>Hidden dimensions for SAC MLP layers</td></tr>
+              <tr><td><code>sac.cnn_features</code></td><td>[32, 32, 32, 32]</td><td>Feature maps per layer for the CNN encoder</td></tr>
+              <tr><td><code>sac.cnn_strides</code></td><td>[2, 2, 2, 2]</td><td>Strides per layer for the CNN encoder</td></tr>
+              <tr><td><code>sac.cnn_padding</code></td><td><code>VALID</code></td><td>Padding type for the CNN encoder layers</td></tr>
+              <tr><td><code>sac.cnn_latent_dim</code></td><td>50</td><td>CNN output feature dim</td></tr>
+              <tr><td><code>sac.tau</code></td><td>0.005</td><td>Target network soft-update rate</td></tr>
+              <tr><td><code>sac.critic_reduction</code></td><td><code>min</code></td><td>Ensemble reduction strategy for target Q-values</td></tr>
+              <tr><td><code>sac.num_qs</code></td><td>10</td><td>Number of Q-networks in the critic ensemble</td></tr>
+              <tr><td><code>sac.dropout_rate</code></td><td>0.0</td><td>Dropout rate applied inside SAC networks</td></tr>
+              <tr><td><code>sac.init_temperature</code></td><td>1.0</td><td>Initial value for the SAC entropy coefficient</td></tr>
+              <tr><td><code>sac.target_entropy</code></td><td>&minus;<code>action_dim</code> / 2</td><td>Target entropy</td></tr>
+              <tr><td><code>sac.action_range</code></td><td><em>Real:</em> [&minus;0.003, 0.003]<br><em>Sim:</em> [&minus;0.1, 0.1]</td><td>Defines the allowed min/max action. Note: SAC always sees actions in [&minus;1.0, 1.0], but actions are scaled to be within <code>sac.action_range</code> before executing in the environment.</td></tr>
+              <tr><td><code>sac.discount</code></td><td><span class="prompt">\(1 - \tfrac{1}{H}\)</span></td><td>Discount is defined based on the task horizon <span class="prompt">\(H\)</span> &mdash; see the MDP Definition table.</td></tr>
+              <tr><td><code>train.human_demos</code></td><td><em>Real:</em> 3 <span class="vs">|</span> <em>Sim:</em> 0</td><td>Human demos collected to seed replay buffer pre-learning</td></tr>
+              <tr><td><code>train.learning_starts</code></td><td><em>Real:</em> 5 <span class="vs">|</span> <em>Sim:</em> 25</td><td>Episodes collected via uniformly sampling <code>sac.action_range</code> to seed the replay buffer pre-learning (this number does not include any human demos)</td></tr>
+              <tr><td><code>train.multi_grad_step</code></td><td><em>Real:</em> 10 <span class="vs">|</span> <em>Sim:</em> 20</td><td>Gradient steps per transition added to the buffer</td></tr>
+              <tr><td><code>train.offline_multi_grad_step</code></td><td><em>Real:</em> 0 <span class="vs">|</span> <em>Sim:</em> 5</td><td>Gradient steps per transition added to the buffer for episodes collected before <code>train.learning_starts</code></td></tr>
+              <tr><td><code>eval.eval_every</code></td><td><em>Real:</em> 30 <span class="vs">|</span> <em>Sim:</em> 50</td><td>Number of training episodes between evaluations</td></tr>
+              <tr><td><code>eval.num_evaluations</code></td><td><em>Real:</em> 10 <span class="vs">|</span> <em>Sim:</em> 64</td><td>Number of evaluation episodes</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="results-table wide hparams">
+        <p class="table-caption above">
+          <span class="fig-num">SARL Hyperparameters.</span>
+        </p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Hyperparameter</th><th>Value</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>outer_policy.max_candidates</code></td><td><em>Real:</em> 9 <span class="vs">|</span> <em>Sim:</em> 4</td><td>Max size of <span class="prompt">\(\mathcal{A}^t_{\mathrm{sem}}\)</span> from Algorithm 2 above. Max number of language prompts the algorithm may choose from at each step</td></tr>
+              <tr><td><code>outer_policy.cache_size</code></td><td><em>Real:</em> see task table below<br><em>Sim:</em> 32</td><td>Max size of <span class="prompt">\(\mathcal{C}\)</span> from Algorithm 2 above. Total number of unique language prompts the algorithm may learn over</td></tr>
+              <tr><td><code>outer_policy.action_dim</code></td><td><em>Real:</em> see task table below<br><em>Sim:</em> 32</td><td>One-hot encoding over cached language commands</td></tr>
+              <tr><td><code>outer_policy.state_dim</code></td><td>8</td><td>Policy has access to a proprioceptive observation</td></tr>
+              <tr><td><code>outer_policy.policy_chunk_size</code></td><td><em>Real:</em> 1 <span class="vs">|</span> <em>Sim:</em> 10</td><td>Number of actions used from each evaluation of <a href="https://www.pi.website/blog/pi05" target="_blank" rel="noopener noreferrer"><span class="prompt">\(\pi\)</span> series policies</a> which generate chunks of actions</td></tr>
+              <tr><td><code>outer_policy.image_resolution</code></td><td>[64, 64]</td><td>Image resolution</td></tr>
+              <tr><td><code>outer_policy.camera_names</code></td><td>[&ldquo;global&rdquo;]</td><td>We only use scene cameras for all experiments</td></tr>
+              <tr><td><code>env.image_resolution</code></td><td>[256, 256]</td><td>Image resolution of the base environment's camera</td></tr>
+              <tr><td><code>sac.batch_size</code></td><td>256</td><td>Optimization batch size for the replay buffer</td></tr>
+              <tr><td><code>sac.critic_lr</code></td><td>0.0003</td><td>Learning rate for the SAC critic network</td></tr>
+              <tr><td><code>sac.hidden_dims</code></td><td>[128, 128, 128]</td><td>Hidden dimensions for SAC MLP layers</td></tr>
+              <tr><td><code>sac.cnn_features</code></td><td>[32, 32, 32, 32]</td><td>Feature maps per layer for the CNN encoder</td></tr>
+              <tr><td><code>sac.cnn_strides</code></td><td>[2, 2, 2, 2]</td><td>Strides per layer for the CNN encoder</td></tr>
+              <tr><td><code>sac.cnn_padding</code></td><td><code>VALID</code></td><td>Padding type for the CNN encoder layers</td></tr>
+              <tr><td><code>sac.cnn_latent_dim</code></td><td>50</td><td>CNN output feature dim</td></tr>
+              <tr><td><code>sac.tau</code></td><td>0.005</td><td>Target network soft-update rate</td></tr>
+              <tr><td><code>sac.critic_reduction</code></td><td><code>min</code></td><td>Ensemble reduction strategy for target Q-values</td></tr>
+              <tr><td><code>sac.num_qs</code></td><td>10</td><td>Number of Q-networks in the critic ensemble</td></tr>
+              <tr><td><code>sac.dropout_rate</code></td><td>0.0</td><td>Dropout rate applied inside SAC networks</td></tr>
+              <tr><td><code>sac.softmax_temp</code></td><td>See task table below</td><td>Softmax temp, <span class="prompt">\(T\)</span>, <span class="prompt">\(\pi^t_{\mathrm{sem}}(\ell \mid s) \propto \exp(Q^t_{\mathrm{sem}}(s,\ell)/T)\)</span> from Algorithm 1.</td></tr>
+              <tr><td><code>sac.discount</code></td><td><span class="prompt">\(1 - \tfrac{1}{H}\)</span></td><td>Discount is defined based on the task horizon <span class="prompt">\(H\)</span> &mdash; see the MDP Definition table.</td></tr>
+              <tr><td><code>train.human_demos</code></td><td><em>Real:</em> 3 <span class="vs">|</span> <em>Sim:</em> 0</td><td>Human demos collected to seed replay buffer pre-learning</td></tr>
+              <tr><td><code>train.learning_starts</code></td><td><em>Real:</em> 5 <span class="vs">|</span> <em>Sim:</em> 25</td><td>Episodes collected via uniformly sampling <code>sac.action_range</code> to seed the replay buffer pre-learning (this number does not include any human demos)</td></tr>
+              <tr><td><code>train.multi_grad_step</code></td><td><em>Real:</em> 10 <span class="vs">|</span> <em>Sim:</em> 20</td><td>Gradient steps per transition added to the buffer</td></tr>
+              <tr><td><code>train.offline_multi_grad_step</code></td><td><em>Real:</em> 0 <span class="vs">|</span> <em>Sim:</em> 5</td><td>Gradient steps per transition added to the buffer for episodes collected before <code>train.learning_starts</code></td></tr>
+              <tr><td><code>eval.eval_every</code></td><td><em>Real:</em> 30 <span class="vs">|</span> <em>Sim:</em> 50</td><td>Number of training episodes between evaluations</td></tr>
+              <tr><td><code>eval.num_evaluations</code></td><td><em>Real:</em> 10 <span class="vs">|</span> <em>Sim:</em> 64</td><td>Number of evaluation episodes</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="results-table wide hparams">
+        <p class="table-caption above">
+          <span class="fig-num">SARL Task-Specific Hyperparameters.</span>
+        </p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th><code>outer_policy.cache_size</code><br>(also <code>outer_policy.action_dim</code>)</th>
+                <th><code>outer_policy.softmax_temp</code></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Real Task 1:</strong> Move the hammer to the plate then grasp the mushroom.</td><td>64</td><td>0.2</td></tr>
+              <tr><td><strong>Real Task 2:</strong> Move the yellow sushi to the pot and pick up the spoon.</td><td>64</td><td>0.1</td></tr>
+              <tr><td><strong>Real Task 3:</strong> Move the banana to the pot on the right and sushi to the bowl.</td><td>100</td><td>0.5</td></tr>
+              <tr><td><strong>Real Task 4:</strong> Move the pot lid to the towel.</td><td>32</td><td>0.2</td></tr>
+              <tr><td><strong>LIBERO-LONG</strong></td><td>32</td><td>0.03</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+    <!-- C. Reset-to-home -->
+    <details class="why-works">
+      <summary>
+        <span class="subsection-kicker">Reset-to-home</span>
+        <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        <span class="summary-desc">An auxiliary command that returns the arm to its starting pose, needed to chain skills on LIBERO-LONG.</span>
+      </summary>
+      <div class="content has-text-justified insight-note">
+        <p>
+          In simulation, we evaluate SARL along with baselines on the
+          <a href="https://libero-project.github.io/main.html" target="_blank" rel="noopener noreferrer">LIBERO-LONG</a> benchmark. As mentioned in
+          Section V-A of the paper, we use a VLA based on <a href="https://www.pi.website/blog/pi05" target="_blank" rel="noopener noreferrer"><span class="prompt">\(\pi_{0.5}\)</span></a>, and finetuned on the
+          <a href="https://libero-project.github.io/main.html" target="_blank" rel="noopener noreferrer">LIBERO-90</a> and
+          <a href="https://droid-dataset.github.io/" target="_blank" rel="noopener noreferrer">DROID</a> datasets. In addition to the original language prompt space for this VLA, we
+          also introduce a &ldquo;reset-to-home&rdquo; command that resets the robot arm to its starting state. We
+          find such a command to be necessary to chain individual skills and make progress on the long-horizon tasks
+          of the LIBERO-LONG benchmark; an unfortunate consequence of the limited diversity of simulators studying
+          long-horizon manipulation. Note that the &ldquo;reset-to-home&rdquo; functionality is straightforward to
+          implement on both simulated and real robots, since it simply runs a PID controller to match the robot's
+          joint-angles or end-effector pose at its starting configuration. Note that the capacity to seamlessly
+          integrate such auxiliary controllers through language highlights a unique strength of our approach. Both
+          SARL and the VLM baseline may leverage the &ldquo;reset-to-home&rdquo; command, and it is up to the
+          individual approach how many steps to run this instruction for.
+        </p>
+      </div>
+    </details>
+
+    <!-- D. Environment Step Plots -->
+    <details class="why-works">
+      <summary>
+        <span class="subsection-kicker">Environment Step Plots</span>
+        <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        <span class="summary-desc">Real-world results re-plotted against environment steps instead of training episodes.</span>
+      </summary>
+      <div class="content has-text-justified insight-note">
+        <p>
+          In the main paper, we provide plots which measure performance against the number of episodes spent
+          training. Below, we provide the same plot with the x-axis swapped to show the number of environment steps
+          spent training, as this is a standard choice in many prior works.
+        </p>
+      </div>
+      <div class="fig">
+        <img src="./static/images/figures/real-env-steps.png" alt="Real-world results measured in environment steps.">
+        <!-- <p class="fig-caption">
+          <span class="fig-num">Real-world results vs. environment steps.</span>
+          Across four complex, real-world tasks, learning over semantic actions with SARL enables the best
+          improvement of generalist policy behavior in deployment. SARL enables new capabilities over prior steering
+          methods such as DSRL and Residual RL, as these methods are fundamentally constrained by the
+          base policy's performance under the task's original prompt. In particular, both DSRL and Residual RL
+          perform best on Task 4, which has the least complex task goal. Finally, our method outperforms an
+          in-context learning VLM baseline (ICL VLM, based on
+          <a href="https://steerable-policies.github.io/" target="_blank" rel="noopener noreferrer">this</a> paper), since VLMs struggle to ground semantic actions in physical
+          behaviors. Each data-point represents 10 evaluations. This plot mirrors Figure 3 of the paper (the
+          real-world plot in the Results section above), but the x-axis is changed to measure environment steps
+          instead of episodes.
+        </p> -->
+      </div>
+    </details>
+
+    <!-- E. VLM Prompts -->
+    <details class="why-works">
+      <summary>
+        <span class="subsection-kicker">VLM Prompts</span>
+        <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        <span class="summary-desc">The six Gemini prompts used by SARL and the in-context learning VLM baseline, reproduced verbatim.</span>
+      </summary>
+      <div class="content has-text-justified insight-note">
+        <p>
+          We use the <a href="https://arxiv.org/abs/2312.11805" target="_blank" rel="noopener noreferrer">Gemini model family</a> for all VLM calls in SARL and the VLM baseline. All VLM calls use
+          the <code>gemini-3-flash-preview</code> model and are allocated 1024 thinking tokens. Our methods use six
+          total prompts (across real and sim experiments, two prompts generate candidate semantic actions
+          <span class="prompt">\(\mathcal{A}^t_{\mathrm{sem}}\)</span> open-endedly and from a cache, and another is used for the
+          in-context learning VLM baseline). All prompts make minimal modifications to those taken from
+          <a href="https://steerable-policies.github.io/" target="_blank" rel="noopener noreferrer">this</a> paper.
+        </p>
+      </div>
+      <details class="why-works sub">
+        <summary>
+          <span class="subsection-kicker">Prompt 1:</span>
+          <span class="subsection-title">Open-ended real-world semantic action candidate generation</span>
+          <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        </summary>
+        <pre class="prompt-pre">You are guiding a robot to complete the task '[self.task_instruction]' in its environment by generating candidate subtask instructions for the robot to follow given an image of the robot's current observation. There are several kinds of instructions the robot understands, each at a different level of abstraction, detailed below. It is not known apriori which level of abstraction will induce the desired behavior in the robot's low-level language conditioned policy, so your job is to generate candidates that will be processed by a downstream algorithm.
+
+Below are examples of the kinds of instructions you can generate for the robot.
+            
+Some examples of High-level instructions are:
+
+- 'grasp the mushroom in the pot'
+
+- 'wipe the cloth across the table'
+
+- 'move the lid above the pot'
+
+- 'lift the carrot up' # Lifting is generallly good post-grasping
+
+- 'move towards the stuffed toy'
+
+- 'move the eggplant to the bowl'
+    
+The robot is generally reliable at following high-level commands, especially when interacting with non-novel objects. They can also be used to better understand the scene and robot state, such as by saying 'lift the object' to ascertain if the robot has actually firmly grasped it. However, these commands may fail when interacting with novel objects, as the robot may not recognize them by name. The robot also may also confuse similar objects with each other (e.g., it may mix up a bowl and pot, or multiple instances of the same kind of object).
+
+Some examples of Atomic Motion instructions are:
+
+- 'move left'
+
+- 'move above the bowl'
+
+- 'move down and close'
+
+- 'open the gripper'
+
+- 'move the cloth left'
+
+- 'pull the drawer handle backward'
+
+Motion commands are good for general positioning, such as moving to a pre-grasp pose above the object the robot must interact with. They can also be used for positional corrections, e.g., 'move up and right above the bowl' if the gripper is too low. These commands are also appropriate when the task involves spatial reasoning (e.g., tasks that reference left or right). However, these commands are often underspecified, so the robot may reach for the wrong object if simply told 'move to the right and grasp.' Note that to go to the back of the table, tell the robot to go 'forwards' (it is forwards from the robot's perspective).
+
+Finally, some examples of Combination instructions are:
+
+- 'move down to the mushroom and grasp it'
+
+- 'grab the mushroom and move it to the plate on the left'
+
+- 'open the gripper and move right'
+
+Combination commands are useful for supplementing the weaknesses of other command types, such as saying 'move right to grasp the carrot' rather than just 'move right and grasp' (if there are multiple objects to the right of the robot) or 'grasp the carrot on the right' (if there are multiple carrots in the scene). However, being too specific may result in out-of-distribution commands, which the robot policy fails to follow. Additionally, less specific commands can be useful for positioning the robot in a location where it's more likely to succeed.
+
+You MUST follow these steps when generating your response: 
+
+- Step 1: Briefly (1-2 sentences) describe the scene in the current observation, such as enumerating which objects are present and the robot grippers current state. If the robot's gripper is close to an object, think carefully about whether the object has already been grasped, lifted or neither. Think about whether the gripper is currently open or closed.
+
+- Step 2: Briefly (1-2 sentences) enumerate the robot's full sequence of objectives required to complete the task.
+
+- Step 3: Briefly (1 sentences) turn the robot's immediate next objective into a subtask statement. A relatively longer-horizon subtask statement is preferred in this step. Eg. "pick up the egg and move it to the bowl" rather than "grasp the egg" or "move down" or "close the gripper". The subtask objective should make sense to execute immediately given the current state.
+
+- Step 4: Briefly (1-2 sentences) think about 1) the overall direction the robot should move in (left, right, back of table ["forwards"], toward the camera ["backwards"], up, down) and 2) obvious verbs that could be used to instruct the robot (use verbs likely present in robot datasets, without being too extravagant and be sure to PRIORITIZE verbs found in the original task description), whether the robot should open/close the gripper. 
+
+- Step 5: (1-2 sentences) think about how to avoid these common failure modes: confusing objects with the same name, interacting with the object directly in front of the robot rather than the intended object, and executing parts of the command out of order (eg. dropping object prematurely when the command involves both "moving" and "releasing").
+
+- Step 6: Output the FINAL MASTER LIST of commands for the robot to choose between. The master list should follow this guidance:
+
+- Output commands most likley to help the robot succeed, while still being diverse.
+
+- Output exactly eight commands. Always output EXACTLY TWO SIMPLE atomic motion commands ouptut more combination commands than any other abstraction type.
+
+- Commands should be diverse in horizon: shorter horizon (eg. "move above the egg") and longer-horizon behaviors ("move the egg to the pot"), but should not exceed the length of the next subtask.
+
+- Use an indicator (left, right, blue) to distinguish objects of the same name ONLY if the robot is near the wrong copy of that object. DO NOT use the indicator if the robot is currently interacting with the correct copy.
+
+- All commands will be executed immediately, so do not output forward-looking commands that do not make sense to run at the robot's current state (eg. "open the gripper" does not make sense if the robot is not yet at the correct position to release the object. However, "move the egg to the plate" does make sense if consistent with the task).
+
+The master list should be numbered. DO NOT organize the master list by objective, simply list all the commands together in one numbered list. After the master list, DO NOT OUTPUT ANY OTHER TEXT.
+
+Current Obervation: [current_observation]</pre>
+      </details>
+      <details class="why-works sub">
+        <summary>
+          <span class="subsection-kicker">Prompt 2:</span>
+          <span class="subsection-title">Real-world semantic action candidate generation from cache</span>
+          <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        </summary>
+        <pre class="prompt-pre">You are guiding a robot to complete the task '[self.task_instruction]' in its environment by chosing a list of candidate task instructions for the robot to follow given an image of the robot's current observation. There are several kinds of instructions the robot understands, each at a different level of abstraction, detailed below. It is not known apriori which level of abstraction will induce the desired behavior in the robot's low-level language conditioned policy, so your job is to generate candidates that will be processed by a downstream algorithm.
+
+Below are examples of the kinds of instructions you can generate for the robot.
+            
+Some examples of High-level instructions are:
+
+- 'grasp the mushroom in the pot'
+
+- 'wipe the cloth across the table'
+
+- 'move the lid above the pot'
+
+- 'lift the carrot up' # Lifting is generallly good post-grasping
+
+- 'move towards the stuffed toy'
+
+- 'move the eggplant to the bowl'
+    
+The robot is generally reliable at following high-level commands, especially when interacting with non-novel objects. They can also be used to better understand the scene and robot state, such as by saying 'lift the object' to ascertain if the robot has actually firmly grasped it. However, these commands may fail when interacting with novel objects, as the robot may not recognize them by name. The robot also may also confuse similar objects with each other (e.g., it may mix up a bowl and pot, or multiple instances of the same kind of object).
+
+Some examples of Atomic Motion instructions are:
+
+- 'move left'
+
+- 'move above the bowl'
+
+- 'move down and close'
+
+- 'open the gripper'
+
+- 'move the cloth left'
+
+- 'pull the drawer handle backward'
+
+Motion commands are good for general positioning, such as moving to a pre-grasp pose above the object the robot must interact with. They can also be used for positional corrections, e.g., 'move up and right above the bowl' if the gripper is too low. These commands are also appropriate when the task involves spatial reasoning (e.g., tasks that reference left or right). However, these commands are often underspecified, so the robot may reach for the wrong object if simply told 'move to the right and grasp.' Note that to go to the back of the table, tell the robot to go 'forwards' (it is forwards from the robot's perspective).
+
+Finally, some examples of Combination instructions are:
+
+- 'move down to the mushroom and grasp it'
+
+- 'grab the mushroom and move it to the plate on the left'
+
+- 'open the gripper and move right'
+
+
+Combination commands are useful for supplementing the weaknesses of other command types, such as saying 'move right to grasp the carrot' rather than just 'move right and grasp' (if there are multiple objects to the right of the robot) or 'grasp the carrot on the right' (if there are multiple carrots in the scene). However, being too specific may result in out-of-distribution commands, which the robot policy fails to follow. Additionally, less specific commands can be useful for positioning the robot in a location where it's more likely to succeed.
+
+You MUST follow these steps when generating your response: 
+
+- Step 1: Briefly (1-2 sentences) describe the scene in the current observation, such as enumerating which objects are present and the robot grippers current state. If the robot's gripper is close to an object, think carefully about whether the object has already been grasped, lifted or neither. Think about whether the gripper is currently open or closed.
+
+- Step 2: Briefly (1-2 sentences) enumerate the robot's full sequence of objectives required to complete the task. IMPORTANT: ONCE A SUBGOAL HAS BEEN COMPLETED, DO NOT KEEP INTERACTING WITH THE OBJECT FOR THAT SUBGOAL. THE DEFINITION OF TASK SUCCESS IS QUITE LOOSE (eg. if the goal is to put an eggplant on the towel, ANY part of the eggplant being on the towel will be considered a success. DO NOT keep interacting with the eggplant).
+
+- Step 3: Briefly (1 sentences) turn the robot's immediate next objective into a subtask statement. A relatively longer-horizon subtask statement is preferred in this step. Eg. "pick up the egg and move it to the bowl" rather than "grasp the egg" or "move down" or "close the gripper". The subtask objective should make sense to execute immediately given the current state.
+
+- Step 4: Briefly (1-2 sentences) think about 1) the overall direction the robot should move in (left, right, back of table ["forwards"], toward the camera ["backwards"], up, down) and 2) obvious verbs that could be used to instruct the robot (use verbs likely present in robot datasets, without being too extravagant and be sure to PRIORITIZE verbs found in the original task description), whether the robot should open/close the gripper. 
+
+- Step 5: (1-2 sentences) think about how to avoid these common failure modes: confusing objects with the same name, interacting with the object directly in front of the robot rather than the intended object, and executing parts of the command out of order (eg. dropping object prematurely when the command involves both "moving" and "releasing").
+
+- Step 6: Output the FINAL MASTER LIST of commands for the robot to choose between. The master list should follow this guidance:
+
+- Output exactly eight commands. Commands MUST BE EXACTLY THE SAME AS THOSE ON THE LIST PROVIDED BELOW. DO NOT OUTPUT ANY OTHER COMMANDS. The list may not be perfect, choose the best fit.
+
+- Output commands most likley to help the robot succeed, while still being diverse.
+
+- Always output EXACTLY TWO SIMPLE atomic motion commands ouptut more combination commands than any other abstraction type. YOU MUST ALWAYS INCLUDE EITHER "move right" or "move left" in the list.
+
+- Commands should be diverse in horizon: shorter horizon (eg. "move above the egg") and longer-horizon behaviors ("move the egg to the pot"), but should not exceed the length of the next subtask.
+
+- Use an indicator (left, right, blue) to distinguish objects of the same name ONLY if the robot is near the wrong copy of that object. DO NOT use the indicator if the robot is currently interacting with the correct copy.
+
+The master list should be numbered (1. 2. 3. ...) but use only the text of the command exactly as presented. DO NOT organize the master list by objective, simply list all the commands together in one numbered list. After the master list, DO NOT OUTPUT ANY OTHER TEXT.
+
+Current Observation: [current_observation]
+
+You must choose commands EXACTLY from this list: [cached_commands_str]</pre>
+      </details>
+      <details class="why-works sub">
+        <summary>
+          <span class="subsection-kicker">Prompt 3:</span>
+          <span class="subsection-title">Real-world in-context learning VLM baseline</span>
+          <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        </summary>
+        <pre class="prompt-pre">You are guiding a robot to complete a task by generating a subtask instruction for the robot to follow given an image of the robot's current observation, and a history of observations and past commands. The robot is trying to accomplish the overall task: '[self.task_description]'. You should keep the rest of the environment unchanged. Note that all objects required for the task are present (no need to search for objects). There are several kinds of instructions the robot understands, each at a different level of abstraction, detailed below. Sometimes, a high-level instruction is sufficient for the robot to make progress towards solving the task, but other times, a more specific command is required.
+
+Below are examples of the kinds of instructions you can generate for the robot.
+            
+Some examples of High-level instructions are:
+
+- 'grasp the mushroom in the pot'
+
+- 'wipe the cloth across the table'
+
+- 'move the lid above the pot'
+
+- 'lift the carrot up'
+
+- 'move towards the stuffed toy'
+
+- 'drop the eggplant in the bowl'
+    
+The robot is generally reliable at following high-level commands, especially when interacting with non-novel objects. They can also be used to better understand the scene and robot state, such as by saying 'lift the object' to ascertain if the robot has actually firmly grasped it. However, these commands may fail when interacting with novel objects, as the robot may not recognize them by name. The robot also may also confuse similar objects with each other (e.g., it may mix up a bowl and pot, or multiple instances of the same kind of object).
+
+Some examples of Atomic Motion instructions are:
+
+- 'move left'
+
+- 'move right and down'
+
+- 'move down and close'
+
+- 'open the gripper'
+
+- 'move the cloth left'
+
+- 'pull the drawer handle backward'
+
+Motion commands are good for general positioning, such as moving to a pre-grasp pose above the object the robot must interact with. They can also be used for more minor corrections, e.g., 'move up and right above the bowl' if the gripper is too low. These commands are also appropriate when the task involves spatial reasoning (e.g., tasks that reference left or right) or moving in unconventional ways (e.g., lifting the arm to grasp something on a high shelf). However, these commands are often underspecified, so the robot may reach for the wrong object if simply told 'move to the right and grasp.'
+
+Some examples of Position-based instructions are:
+
+- 'pick up the object at &lt;mushroom&gt;'
+
+- 'go to &lt;pot&gt;'
+
+- 'grasp at &lt;blue cube&gt;'
+
+- 'move above &lt;plate&gt;'
+
+- 'open gripper at &lt;bowl&gt;'
+
+- 'move towards &lt;towel&gt;'
+
+Note, you simply need to specify the object name within angle brackets, e.g., &lt;mushroom&gt;, and a object detector system will fill in the pixel coordinates for you. If there are multiple instances of the object, provide a unique, specific identifier within the brackets to indicate which instance you are referring to, e.g., &lt;mushroom on the left&gt;.
+
+Position-based commands are especially helpful for specifying novel objects that the robot fails to recognize by name. They can also be used to clearly specify locations, such as where to place or move objects. However, these commands can be unreliable, as the robot may get confused (e.g., reaching for the wrong object in scenes with clutter or with multiple instances of the same object). The object detector may also fail, especially when objects are occluded.
+
+Next, some examples of Combination instructions are:
+
+- 'move down to the object at &lt;mushroom&gt; and grasp it'
+
+- 'grab the mushroom at &lt;mushroom on the left&gt; and move it to &lt;plate&gt;'
+
+- 'move the stuffed toy toward the box at &lt;box&gt;'
+
+Combination commands are useful for supplementing the weaknesses of other command types, such as saying 'move right to grasp the object at &lt;object description&gt;' rather than just 'move right and grasp' (if there are multiple objects to the right of the robot). However, being too specific may result in out-of-distribution commands, which the robot policy fails to follow. Additionally, less specific commands can be useful for positioning the robot in a location where it's more likely to succeed.
+
+You MUST follow these steps when generating your response: 
+
+- Step 1: Briefly (1-2 sentences) describe the scene in the current observation, and any important differences from past observations (eg. objects moved, picked up, dropped etc).
+
+- Step 2: Briefly (1 sentence) describe what must happen next to make progress towards the overall task.
+
+- Step 3: Briefly reason (2-3 sentences) about which level of abstraction is most appropriate given the current observation and task progress.
+
+- Step 4: Determine the final steerable command (last line) for the robot to execute. Only the LAST line of your output will be interpreted as the subtask command. In the LAST line, answer ONLY with the subtask instruction that the robot should execute, and NOTHING ELSE.
+
+Note: The robot will ask you for a new instruction after executing for a few steps. If you've issued the same type of command more than once without progress, you MUST issue a command at a different level of abstraction. If you previously provided a command with positions &lt;&gt; (without progress), you MAY NOT use positions in the next command. For example:
+
+- If you previously tried to pick up the mushroom by specifying the mushroom's position, but the robot did not reach the mushroom, next time you can explicitly tell the robot to move in a certain direction (eg. move to the right and down).
+
+- If the robot reached for the wrong object when you told it to pick up the mushroom at &lt;mushroom on the left&gt;. This time, you should give a command at a different level of abstraction: move left to the mushroom and grasp it.
+
+Here are the past observations and commands: [history]
+
+Current Obervation: [current_observation]
+
+Based on this observation, generate the next command. Remember the instructions: describe the scene, determine what must happen next, determine the best level of abstraction, output the final command. Again, the LAST line of your output will be interpreted as the final steerable, subtask command. In the LAST line, answer ONLY with the subtask instruction that the robot should execute, and NOTHING ELSE.</pre>
+      </details>
+      <details class="why-works sub">
+        <summary>
+          <span class="subsection-kicker">Prompt 4:</span>
+          <span class="subsection-title">Open-ended sim semantic action candidate generation</span>
+          <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        </summary>
+        <pre class="prompt-pre">You are guiding a robot to complete the task '[self.task_instruction]' in its environment by generating candidate subtask instructions for the robot to follow given an image of the robot's current observation. There are several kinds of instructions the robot understands, each at a different level of abstraction, detailed below. It is not known apriori which level of abstraction will induce the desired behavior in the robot's low-level language conditioned policy, so your job is to generate candidates that will be processed by a downstream algorithm.
+
+Below are examples of the kinds of instructions you can generate for the robot.
+            
+Some examples of High-level instructions are:
+
+- 'grasp the mushroom in the pot'
+
+- 'wipe the cloth across the table'
+
+- 'move the lid above the pot'
+
+- 'lift the carrot up' # Lifting is generallly good post-grasping
+
+- 'move towards the stuffed toy'
+
+- 'move the eggplant to the bowl'
+    
+The robot is generally reliable at following high-level commands, especially when interacting with non-novel objects. They can also be used to better understand the scene and robot state, such as by saying 'lift the object' to ascertain if the robot has actually firmly grasped it. However, these commands may fail when interacting with novel objects, as the robot may not recognize them by name. The robot also may also confuse similar objects with each other (e.g., it may mix up a bowl and pot, or multiple instances of the same kind of object).
+
+Some examples of Atomic Motion instructions are:
+
+- 'move left'
+
+- 'move above the bowl'
+
+- 'move down and close'
+
+- 'open the gripper'
+
+- 'move the cloth left'
+
+- 'pull the drawer handle backward'
+
+Motion commands are good for general positioning, such as moving to a pre-grasp pose above the object the robot must interact with. They can also be used for positional corrections, e.g., 'move up and right above the bowl' if the gripper is too low. These commands are also appropriate when the task involves spatial reasoning (e.g., tasks that reference left or right). However, these commands are often underspecified, so the robot may reach for the wrong object if simply told 'move to the right and grasp.' Note that to go to the back of the table, tell the robot to go 'forwards' (it is forwards from the robot's perspective).
+
+Next, some examples of Combination instructions are:
+
+- 'move down to the mushroom and grasp it'
+
+- 'grab the mushroom and move it to the plate on the left'
+
+- 'open the gripper and move right'
+
+Combination commands are useful for supplementing the weaknesses of other command types, such as saying 'move right to grasp the carrot' rather than just 'move right and grasp' (if there are multiple objects to the right of the robot) or 'grasp the carrot on the right' (if there are multiple carrots in the scene). However, being too specific may result in out-of-distribution commands, which the robot policy fails to follow. Additionally, less specific commands can be useful for positioning the robot in a location where it's more likely to succeed.
+
+Finally, there is the 'reset to home' command, which can be issued when the robot is stuck. It is useful for repositioning the robot to a known state.
+
+You MUST follow these steps when generating your response: 
+
+- Step 1: Briefly (1-2 sentences) describe the scene in the current observation, such as enumerating which objects are present and the robot grippers current state. If the robot's gripper is close to an object, think carefully about whether the object has already been grasped, lifted or neither. Think about whether the gripper is currently open or closed.
+
+- Step 2: Briefly (1-2 sentences) enumerate the robot's full sequence of objectives required to complete the task.
+
+- Step 3: Briefly (1 sentences) turn the robot's immediate next objective into a subtask statement. A relatively longer-horizon subtask statement is preferred in this step. Eg. "pick up the egg and move it to the bowl" rather than "grasp the egg" or "move down" or "close the gripper". The subtask objective should make sense to execute immediately given the current state.
+
+- Step 4: Briefly (1-2 sentences) think about 1) the overall direction the robot should move in (left, right, forwards, backwards, up, down) and 2) obvious verbs that could be used to instruct the robot (use verbs likely present in robot datasets, without being too extravagant and be sure to PRIORITIZE verbs found in the original task description). 
+
+- Step 5: (1-2 sentences) think about how to avoid these common failure modes: confusing objects with the same name, interacting with the object directly in front of the robot rather than the intended object, and executing parts of the command out of order (eg. dropping object prematurely when the command involves both "moving" and "releasing").
+
+- Step 6: Output the FINAL MASTER LIST of commands for the robot to choose between. The master list should follow this guidance:
+
+- Output commands most likley to help the robot succeed, while still being diverse.
+
+- Output exactly four commands. Always output a single atomic motion commands ouptut more subtask commands than any other abstraction type.
+
+- Commands should be diverse in horizon: shorter horizon (eg. "move above the egg") and longer-horizon behaviors ("move the egg to the pot"), but should not exceed the length of the next subtask.
+
+- Use an indicator (left, right, blue) to distinguish objects of the same name ONLY if the robot is near the wrong copy of that object. DO NOT use the indicator if the robot is currently interacting with the correct copy.
+
+- All commands will be executed immediately, so do not output forward-looking commands that do not make sense to run at the robot's current state (eg. "open the gripper" does not make sense if the robot is not yet at the correct position to release the object. However, "move the egg to the plate" does make sense if consistent with the task).
+
+The master list should be numbered. DO NOT organize the master list by objective, simply list all the commands together in one numbered list. After the master list, DO NOT OUTPUT ANY OTHER TEXT.
+
+Current Obervation: [current_observation]</pre>
+      </details>
+      <details class="why-works sub">
+        <summary>
+          <span class="subsection-kicker">Prompt 5:</span>
+          <span class="subsection-title">Sim semantic action candidate generation from cache</span>
+          <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        </summary>
+        <pre class="prompt-pre">You are guiding a robot to complete the task '[self.task_instruction]' in its environment by chosing a list of candidate task instructions for the robot to follow given an image of the robot's current observation. There are several kinds of instructions the robot understands, each at a different level of abstraction, detailed below. It is not known apriori which level of abstraction will induce the desired behavior in the robot's low-level language conditioned policy, so your job is to generate candidates that will be processed by a downstream algorithm.
+
+Below are examples of the kinds of instructions you can generate for the robot.
+            
+Some examples of High-level instructions are:
+
+- 'grasp the mushroom in the pot'
+
+- 'wipe the cloth across the table'
+
+- 'move the lid above the pot'
+
+- 'lift the carrot up' # Lifting is generally good post-grasping
+
+- 'move towards the stuffed toy'
+
+- 'move the eggplant to the bowl'
+    
+The robot is generally reliable at following high-level commands, especially when interacting with non-novel objects. They can also be used to better understand the scene and robot state, such as by saying 'lift the object' to ascertain if the robot has actually firmly grasped it. However, these commands may fail when interacting with novel objects, as the robot may not recognize them by name. The robot also may also confuse similar objects with each other (e.g., it may mix up a bowl and pot, or multiple instances of the same kind of object).
+
+Some examples of Atomic Motion instructions are:
+
+- 'move left'
+
+- 'move above the bowl'
+
+- 'move down and close'
+
+- 'open the gripper'
+
+- 'move the cloth left'
+
+- 'pull the drawer handle backward'
+
+Motion commands are good for general positioning, such as moving to a pre-grasp pose above the object the robot must interact with. They can also be used for positional corrections, e.g., 'move up and right above the bowl' if the gripper is too low. These commands are also appropriate when the task involves spatial reasoning (e.g., tasks that reference left or right). However, these commands are often underspecified, so the robot may reach for the wrong object if simply told 'move to the right and grasp.' Note that to go to the back of the table, tell the robot to go 'forwards' (it is forwards from the robot's perspective).
+
+Next, some examples of Combination instructions are:
+
+- 'move down to the mushroom and grasp it'
+
+- 'grab the mushroom and move it to the plate on the left'
+
+- 'open the gripper and move right'
+
+Combination commands are useful for supplementing the weaknesses of other command types, such as saying 'move right to grasp the carrot' rather than just 'move right and grasp' (if there are multiple objects to the right of the robot) or 'grasp the carrot on the right' (if there are multiple carrots in the scene). However, being too specific may result in out-of-distribution commands, which the robot policy fails to follow. Additionally, less specific commands can be useful for positioning the robot in a location where it's more likely to succeed.
+
+Finally, there is the 'reset to home' command, which can be issued when the robot is stuck. It is useful for repositioning the robot to a known state.
+
+You MUST follow these steps when generating your response: 
+
+- Step 1: Briefly (1-2 sentences) describe the scene in the current observation, such as enumerating which objects are present and the robot grippers current state. If the robot's gripper is close to an object, think carefully about whether the object has already been grasped, lifted or neither. Think about whether the gripper is currently open or closed.
+
+- Step 2: Briefly (1-2 sentences) enumerate the robot's full sequence of objectives required to complete the task.
+
+- Step 3: Briefly (1 sentences) turn the robot's immediate next objective into a subtask statement. A relatively longer-horizon subtask statement is preferred in this step. Eg. "pick up the egg and move it to the bowl" rather than "grasp the egg" or "move down" or "close the gripper". The subtask objective should make sense to execute immediately given the current state.
+
+- Step 4: Briefly (1-2 sentences) think about 1) the overall direction the robot should move in (left, right, forwards, backwards, up, down) and 2) obvious verbs that could be used to instruct the robot (use verbs likely present in robot datasets, without being too extravagant and be sure to PRIORITIZE verbs found in the original task description). 
+
+- Step 5: (1-2 sentences) think about how to avoid these common failure modes: confusing objects with the same name, interacting with the object directly in front of the robot rather than the intended object, and executing parts of the command out of order (eg. dropping object prematurely when the command involves both "moving" and "releasing").
+
+- Step 6: Output the FINAL MASTER LIST of commands for the robot to choose between. The master list should follow this guidance:
+
+- Output exactly four commands. Commands MUST BE EXACTLY THE SAME AS THOSE ON THE LIST PROVIDED BELOW. DO NOT OUTPUT ANY OTHER COMMANDS. The list may not be perfect, choose the best fit.
+
+- Output commands most likley to help the robot succeed, while still being diverse.
+
+- Always output a single atomic motion commands ouptut more subtask commands than any other abstraction type.
+
+- Commands should be diverse in horizon: shorter horizon (eg. "move above the egg") and longer-horizon behaviors ("move the egg to the pot"), but should not exceed the length of the next subtask.
+
+- Use an indicator (left, right, blue) to distinguish objects of the same name ONLY if the robot is near the wrong copy of that object. DO NOT use the indicator if the robot is currently interacting with the correct copy.
+
+- All commands will be executed IMMEDIATELY (THIS IS VERY IMPORTANT), so do not output forward-looking commands that do not make sense to run at the robot's current state (eg. "open the gripper" does not make sense if the robot is not yet at the correct position to release the object. However, "move the egg to the plate" does make sense if consistent with the task).
+The master list should be numbered. DO NOT organize the master list by objective, simply list all the commands together in one numbered list. After the master list, DO NOT OUTPUT ANY OTHER TEXT.
+
+Current Obervation: [current_observation]
+
+You must choose commands EXACTLY from this list: [cached_commands_str]</pre>
+      </details>
+      <details class="why-works sub">
+        <summary>
+          <span class="subsection-kicker">Prompt 6:</span>
+          <span class="subsection-title">Sim in-context learning VLM baseline</span>
+          <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        </summary>
+        <pre class="prompt-pre">You are guiding a robot to complete a task by generating a subtask instruction for the robot to follow given an image of the robot's current observation, and a history of observations and past commands. The robot is trying to accomplish the overall task: '[self.task_description]'. You should keep the rest of the environment unchanged. Note that all objects required for the task are present (no need to search for objects). There are several kinds of instructions the robot understands, each at a different level of abstraction, detailed below. Sometimes, a high-level instruction is sufficient for the robot to make progress towards solving the task, but other times, a more specific command is required.
+
+Below are examples of the kinds of instructions you can generate for the robot.
+            
+Some examples of High-level instructions are:
+
+- 'grasp the mushroom in the pot'
+
+- 'wipe the cloth across the table'
+
+- 'move the lid above the pot'
+
+- 'lift the carrot up' # IMPORTANT: Lifting is generallly good post-grasping
+
+- 'move towards the stuffed toy'
+
+- 'drop the eggplant in the bowl'
+    
+The robot is generally reliable at following high-level commands, especially when interacting with non-novel objects. They can also be used to better understand the scene and robot state, such as by saying 'lift the object' to ascertain if the robot has actually firmly grasped it. However, these commands may fail when interacting with novel objects, as the robot may not recognize them by name. The robot also may also confuse similar objects with each other (e.g., it may mix up a bowl and pot, or multiple instances of the same kind of object).
+
+Some examples of Atomic Motion instructions are:
+
+- 'move left'
+
+- 'move right and down'
+
+- 'move down and close'
+
+- 'open the gripper'
+
+- 'move the cloth left'
+
+- 'pull the drawer handle backward'
+
+Motion commands are good for general positioning, such as moving to a pre-grasp pose above the object the robot must interact with. They can also be used for more minor corrections, e.g., 'move up and right above the bowl' if the gripper is too low. These commands are also appropriate when the task involves spatial reasoning (e.g., tasks that reference left or right) or moving in unconventional ways (e.g., lifting the arm to grasp something on a high shelf). However, these commands are often underspecified, so the robot may reach for the wrong object if simply told 'move to the right and grasp.'
+
+Next, some examples of Combination instructions are:
+
+- 'move down to the object and grasp it'
+
+- 'grab the mushroom and move it to the plate'
+
+- 'move the stuffed toy toward the box and drop it in'
+
+Combination commands are useful for supplementing the weaknesses of other command types, such as saying 'move right to grasp the object' rather than just 'grasp the object' (if there are multiple objects near the robot). However, being too specific may result in out-of-distribution commands, which the robot policy fails to follow. Additionally, less specific commands can be useful for positioning the robot in a location where it's more likely to succeed.
+
+Finally, there is the 'reset to home' command, which can be issued when the robot is stuck. It is useful for repositioning the robot to a known state. Sometimes, this command needs to be issues multiple times in a row to get the robot unstuck.
+
+You MUST follow these steps when generating your response: 
+
+- Step 1: Briefly (1-2 sentences) describe the scene in the current observation, and any important differences from past observations (eg. objects moved, picked up, dropped etc).
+
+- Step 2: Briefly (1 sentence) describe what must happen next to make progress towards the overall task.
+
+- Step 3: Briefly reason (2-3 sentences) about which level of abstraction is most appropriate given the current observation and task progress.
+
+- Step 4: Determine the final steerable command (last line) for the robot to execute. Only the LAST line of your output will be interpreted as the subtask command. In the LAST line, answer ONLY with the subtask instruction that the robot should execute, and NOTHING ELSE.
+
+Note: The robot will ask you for a new instruction after executing for a few steps. If you've issued the same type of command more than once without progress, you MUST issue a command at a different level of abstraction. For example:
+
+- If you previously tried to pick up the mushroom by specifying the mushroom by name, but the robot did not reach the mushroom, next time, for example, you can explicitly tell the robot to move in a certain direction (eg. move to the right and down).
+
+Here are the past observations and commands: [history]
+
+Current Obervation: [current_observation]
+
+Based on this observation, generate the next command. Remember the instructions: describe the scene, determine what must happen next, determine the best level of abstraction, output the final command. Again, the LAST line of your output will be interpreted as the final steerable, subtask command. In the LAST line, answer ONLY with the subtask instruction that the robot should execute, and NOTHING ELSE.</pre>
+      </details>
+      <div style="height: 0.25rem;"></div>
+    </details>
+
+    <!-- F. Additional Qualitative Examples -->
+    <details class="why-works">
+      <summary>
+        <span class="subsection-kicker">Additional Qualitative Examples</span>
+        <span class="why-works-chevron" aria-hidden="true"><i class="fas fa-chevron-down"></i></span>
+        <span class="summary-desc">More qualitative rollouts contrasting the in-context learning VLM's ungrounded semantic actions with SARL's.</span>
+      </summary>
+      <div class="content has-text-justified insight-note">
+        <p>
+          Additional qualitative examples of catastrophic failures due to the in-context learning VLM baseline's
+          lack of grounding are shown below (extending Figure 7 of the paper).
+        </p>
+      </div>
+      <div class="fig">
+        <img src="./static/images/figures/sarl-vs-vlm-full.jpg" alt="Extended qualitative comparison of ICL VLM failures vs. SARL.">
+        <p class="fig-caption">
+          <span class="fig-num">ICL VLM vs. SARL, extended.</span>
+          Across tasks, an in-context learning VLM (based on
+          <a href="https://steerable-policies.github.io/" target="_blank" rel="noopener noreferrer">this</a> paper) takes semantic actions that are semantically meaningful, but
+          lack grounding in physical behaviors, leading to task failures. By contrast, SARL's learned semantic
+          actions correctly navigate scenarios where choosing the right instruction is critical.
+        </p>
+      </div>
+    </details>
+
+  </div>
+</section>
+
+
 <footer class="footer">
   <div class="container">
     <div class="columns is-centered">
@@ -610,14 +1593,16 @@
 
 <script>
   document.addEventListener('DOMContentLoaded', function () {
-    // Render math notation in the Method section (KaTeX, \( ... \) delimiters).
-    var methodSection = document.getElementById('method');
-    if (methodSection && window.renderMathInElement) {
-      window.renderMathInElement(methodSection, {
-        delimiters: [{ left: '\\(', right: '\\)', display: false }],
-        throwOnError: false
-      });
-    }
+    // Render math notation (KaTeX, \( ... \) delimiters) in the sections that use it.
+    ['method', 'experimental-details'].forEach(function (id) {
+      var sec = document.getElementById(id);
+      if (sec && window.renderMathInElement) {
+        window.renderMathInElement(sec, {
+          delimiters: [{ left: '\\(', right: '\\)', display: false }],
+          throwOnError: false
+        });
+      }
+    });
 
     // Scroll-spy: highlight the side-nav item for the section in view.
     var navLinks = document.querySelectorAll('.side-nav a');
