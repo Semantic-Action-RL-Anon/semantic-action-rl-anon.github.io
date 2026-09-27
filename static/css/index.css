@@ -544,11 +544,6 @@ html {
 
 /* ===== Experimental Details section ===== */
 
-/* The section, hero button, and nav entry are hidden unless the page is loaded
-   with ?experimental-details=show (see the inline script in <head>). */
-html:not([data-exp-details]) #experimental-details,
-html:not([data-exp-details]) .exp-details-gate { display: none !important; }
-
 /* Wide table variant for the appendix tables */
 .results-table.wide { max-width: none; }
 .results-table.wide table { font-size: 0.85rem; }
@@ -604,6 +599,19 @@ html:not([data-exp-details]) .exp-details-gate { display: none !important; }
 /* Hyperparameter tables: title sits above its table, wide gap between consecutive tables */
 .results-table .table-caption.above { margin: 0 0 0.6rem; }
 .why-works .results-table + .results-table { margin-top: 3.5rem; }
+/* Hyperparameter tables nested in collapsibles: scroll like the VLM prompts,
+   with the header row pinned while scrolling */
+.why-works.sub .results-table { margin: 1rem auto; }
+.why-works.sub .table-scroll { max-height: 430px; overflow: auto; }
+.why-works.sub .results-table table { border-top: none; }
+.why-works.sub .results-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff;
+  border-bottom: none;
+  box-shadow: inset 0 2px 0 #333, inset 0 -1px 0 #333; /* borders don't stick with border-collapse */
+}
 
 /* "Why" cards: hard to prompt / VLMs not enough / need RL */
 .why-grid {
